@@ -8,13 +8,16 @@
 
 #include <IRremote.h>
 #include <ETH.h>
+#include <WiFi.h>
 #include "AsyncUDP.h"
 #include <sys/time.h>
 #include "esp_timer.h"
-#include <EEPROM.h>
+//#include <EEPROM.h>
 
 AsyncUDP udp;
 
+const IPAddress ip_address(192,168,2,150);
+const int port = 9324;
 
 int RECV_PIN = 2;
 
@@ -26,14 +29,14 @@ decode_results results;
 static bool eth_connected = false;
 static bool udp_connected = false;
 
-const int vol_down = 551534655;
-const int vol_up = 551502015;
-const int repeat = 4294967295;
-const int mute = 551522415;
+const int vol_down = -66847996;
+const int vol_up = -50136316;
+const int repeat = 0;
+const int mute = -167118076;
 
-#define EEPROM_SIZE 12
-int volume;
-bool muted;
+//#define EEPROM_SIZE 12
+//int volume;
+//bool muted;
 
 int now = esp_timer_get_time()/1000;
 int reset_time = now + 1000;
@@ -65,7 +68,7 @@ void Net_Event(WiFiEvent_t event)
       Serial.print(ETH.linkSpeed());
       Serial.println("Mbps");
       eth_connected = true;
-      if (udp.connect(IPAddress(192,168,2,75), 48630)) {
+      if (udp.connect(ip_address, port)) {
         udp_connected = true;
       }else {
         udp_connected = false;
@@ -87,21 +90,14 @@ void Net_Event(WiFiEvent_t event)
   }
 }
 
-void Set_Volume(int vol){
-  int address = 0;
-  EEPROM.write(address, vol);
-  address += sizeof(vol);
-  EEPROM.write(address, muted);
-  EEPROM.commit();
-  int adjusted_volume = (vol/100.0) * 65535;
-  Serial.print("Volume at: ");
-  Serial.print(vol);
-  Serial.print("%    Raw: ");
-  Serial.println(adjusted_volume);
+void Send_Command(String cmd){
   Serial.println("Sending Network Commands");
-  for (int i=314; i<=384; i=i+10) {
-    udp.printf("CS %d %d\r", i, adjusted_volume);
+  if (udp_connected) {
+    udp.printf("%s", cmd.c_str());
+  } else {
+    Serial.println("UDP Failed");
   }
+  
 }
 
 
@@ -120,11 +116,15 @@ void setup()
   WiFi.onEvent(Net_Event);
   ETH.begin();
   Serial.println("Started Ethernet");
-  EEPROM.begin(EEPROM_SIZE);
-  int address = 0;
-  volume = EEPROM.read(address);
-  address += sizeof(volume);
-  muted = EEPROM.read(address);
+//   EEPROM.begin(EEPROM_SIZE);
+//   int address = 0;
+//   volume = EEPROM.read(address);
+//   if (volume == 255 || volume < 0 || volume > 100) {
+//     // EEPROM is uninitialized, so set a default volume
+//     volume = 50; // or whatever default you prefer
+//   }
+//   address += sizeof(volume);
+//   muted = EEPROM.read(address);
 }
 
 void loop() {
@@ -134,40 +134,27 @@ void loop() {
     current_command = 0;
   }
 
-  if (irrecv.decode(&results)) {
-    Serial.println(results.value);
+  if (irrecv.decode()) {
+    int ir_command = irrecv.decodedIRData.decodedRawData;
+    Serial.println(ir_command);
     reset_time = now + 1000;
     if (eth_connected && udp_connected)  {
     //if (true) {
-      if (results.value == repeat && (current_command == vol_up || current_command == vol_down)) {
-        results.value = current_command;
+      if (ir_command == repeat && (current_command == vol_up || current_command == vol_down)) {
+        ir_command = current_command;
       }
 
-      if (results.value == vol_up and volume < 100 ) {
-        volume = volume + 1;
+      if (ir_command == vol_up ) {
         current_command = vol_up;
-        muted = 0;
-        Set_Volume(volume);
+        Send_Command("vol_up");
       }
-      else if (results.value == vol_down && volume > 0) {
-        volume = volume - 1;
+      else if (ir_command == vol_down) {
         current_command = vol_down;
-        muted = 0;
-        Set_Volume(volume);
+        Send_Command("vol_down");
       }
-      else if (results.value == mute) {
-        if ( muted == 1 ){
-          muted = 0;
-          Set_Volume(volume);
-        }
-        else {
-          muted = 1;
-          Set_Volume(0);
-        }
-
+      else if (ir_command == mute) {
+        Send_Command("mute_toggle");
       }
-
-      
       
     }
     irrecv.resume(); // Receive the next value
